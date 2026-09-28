@@ -1,0 +1,85 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String             @id @default(uuid())
+  email        String             @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  sessions     Session[]
+  skills       UserSkill[]
+  attempts     Attempt[]
+  benchmarks   BenchmarkProfile[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model UserSkill {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  operation         String   // ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION, VISUALIZATION, TABLE_MASTERY
+  skillLevel        Float    @default(1.0)
+  accuracy          Float    @default(0.0)
+  avgResponseTimeMs Float    @default(0.0)
+  totalAttempts     Int      @default(0)
+  totalCorrect      Int      @default(0)
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, operation])
+}
+
+model Attempt {
+  id                String   @id @default(uuid())
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sessionId         String?
+  questionId        String
+  operation         String   // ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION, VISUALIZATION, TABLE_MASTERY
+  difficulty        String   // EASY, MEDIUM, HARD, VERY_HARD
+  question          String
+  correctAnswer     String
+  userAnswer        String
+  isCorrect         Boolean
+  responseTimeMs    Int
+  selectedTechnique String?  // e.g. PLACE_VALUE_DECOMPOSITION, CHUNK_ADDITION, EASY_NUMBER, MENTAL_ABACUS
+  visualizationMode String?  // ABACUS_VISIBLE, ABACUS_GUIDED, ABACUS_PARTIAL, ABACUS_FLASH, NUMBERS_ONLY
+  numberOfDigits    Int
+  carryCount        Int      @default(0)
+  borrowCount       Int      @default(0)
+  operandCount      Int      @default(2)
+  createdAt         DateTime @default(now())
+}
+
+model BenchmarkProfile {
+  id                   String   @id @default(uuid())
+  userId               String?
+  user                 User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name                 String
+  isCreatorProfile     Boolean  @default(false)
+  accuracy             Float
+  avgResponseTimeMs    Float
+  medianResponseTimeMs Float
+  fastestResponseMs    Int
+  slowestResponseMs    Int
+  bestStreak           Int
+  qpm                  Float    // Questions per minute
+  maxDifficulty        String
+  operationStatsJson   String   // JSON payload of operation breakdown
+  createdAt            DateTime @default(now())
+}

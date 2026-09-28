@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#F7F3EA] text-[#18211E] font-sans antialiased min-h-screen selection:bg-terracotta-500 selection:text-white;
+  }
+}
+
+/* Custom scrollbars & subtle paper textures */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F7F3EA;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D9D5CA;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #6F8B7E;
+}
