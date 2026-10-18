@@ -20,7 +20,7 @@ export interface TrainResponseData {
   reason?: string;
 }
 
-const ML_SERVICE_URL = process.env.NEXT_PUBLIC_ML_SERVICE_URL || 'http://localhost:8000';
+const ML_SERVICE_URL = process.env.NEXT_PUBLIC_ML_SERVICE_URL || 'https://mentalmath-ml.onrender.com';
 const ATTEMPTS_SINCE_TRAIN_KEY = 'mentalmath_attempts_since_train_v1';
 
 // Circuit-breaker state to prevent 1500ms fetch delay on every answer when ML service is offline
