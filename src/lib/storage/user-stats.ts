@@ -12,6 +12,14 @@ export interface UserAttemptRecord {
   responseTimeMs: number;
   timestamp: number;
   selectedTechnique?: string;
+  // ML feature values & label for model retraining (optional for backwards compatibility)
+  historical_accuracy?: number; // 0 - 1
+  avg_response_time_sec?: number;
+  numberOfDigits?: number;
+  carryCount?: number;
+  borrowCount?: number;
+  operandCount?: number;
+  label?: number; // 1 or 0
 }
 
 export interface OperationSkillSummary {

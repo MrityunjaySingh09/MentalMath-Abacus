@@ -29,6 +29,11 @@ class TrainRequest(BaseModel):
     features: list[list[float]]
     labels: list[int]
 
+class TrainResponse(BaseModel):
+    status: str
+    samples_received: int
+    reason: str
+
 @app.get("/healthcheck")
 def healthcheck():
     return {"status": "ok", "service": "MENTALMATH ML Microservice"}
@@ -46,15 +51,19 @@ def predict_success(req: PredictRequest):
     p_correct = learner_model.predict_p_correct(features)
     
     if p_correct > 0.85:
-      challenge = "INCREASE_DIFFICULTY"
+        challenge = "INCREASE_DIFFICULTY"
     elif p_correct < 0.55:
-      challenge = "DECREASE_DIFFICULTY"
+        challenge = "DECREASE_DIFFICULTY"
     else:
-      challenge = "OPTIMAL_ZONE"
+        challenge = "OPTIMAL_ZONE"
 
     return PredictResponse(p_correct=p_correct, recommended_challenge_level=challenge)
 
-@app.post("/train_model")
+@app.post("/train_model", response_model=TrainResponse)
 def train_model(req: TrainRequest):
-    learner_model.train(req.features, req.labels)
-    return {"status": "trained", "samples_received": len(req.labels)}
+    result = learner_model.train(req.features, req.labels)
+    return TrainResponse(
+        status=result["status"],
+        samples_received=len(req.labels),
+        reason=result.get("reason", ""),
+    )

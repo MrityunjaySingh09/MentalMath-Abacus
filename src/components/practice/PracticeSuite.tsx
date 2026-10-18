@@ -7,10 +7,10 @@ import {
   QuestionData,
   generateQuestion,
 } from '@/lib/math/question-generator';
-import { calculateNextDifficulty } from '@/lib/adaptive/rule-adaptive';
-import { predictUserSuccess } from '@/lib/adaptive/ml-client';
+import { calculateNextDifficulty, DIFFICULTY_RANKS } from '@/lib/adaptive/rule-adaptive';
+import { predictUserSuccess, trackAttemptAndTrainIfNeeded } from '@/lib/adaptive/ml-client';
 import { recordAttempt } from '@/lib/storage/user-stats';
-import { Timer, CheckCircle2, XCircle, ArrowRight, HelpCircle, Sparkles, TrendingUp } from 'lucide-react';
+import { Timer, CheckCircle2, XCircle, ArrowRight, TrendingUp } from 'lucide-react';
 
 interface PracticeSuiteProps {
   initialOperation?: OperationType;
@@ -36,6 +36,8 @@ export const PracticeSuite: React.FC<PracticeSuiteProps> = ({
   const [streak, setStreak] = useState(0);
   const [adaptiveNote, setAdaptiveNote] = useState<string>('Difficulty: EASY · Building Baseline');
   const [recentTimes, setRecentTimes] = useState<number[]>([]);
+  const [attemptsAtCurrentDifficulty, setAttemptsAtCurrentDifficulty] = useState<number>(0);
+  const [lastPredictedSuccess, setLastPredictedSuccess] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<{
     isCorrect: boolean;
     timeMs: number;
@@ -96,13 +98,22 @@ export const PracticeSuite: React.FC<PracticeSuiteProps> = ({
     const updatedTimes = [...recentTimes, responseTimeMs].slice(-5);
     setRecentTimes(updatedTimes);
 
+    // Show feedback immediately without waiting for background network requests
     setFeedback({
       isCorrect,
       timeMs: responseTimeMs,
       correctAnswer: question.correctAnswer,
     });
 
-    // Record attempt to localStorage for user stats & dashboard persistence
+    // Performance calculations
+    const updatedTotalAttempts = totalAttempts + 1;
+    const updatedTotalCorrect = totalCorrect + (isCorrect ? 1 : 0);
+    const newAccPercent = (updatedTotalCorrect / updatedTotalAttempts) * 100; // 0 - 100 for rule engine
+    const histAcc01 = updatedTotalCorrect / updatedTotalAttempts; // 0.0 - 1.0 normalized for ML service
+    const avgTimeMs = updatedTimes.reduce((a, b) => a + b, 0) / updatedTimes.length;
+    const avgTimeSec = avgTimeMs / 1000;
+
+    // Record attempt to localStorage with 6 prediction features + label for model retraining
     recordAttempt({
       operation,
       difficulty,
@@ -112,39 +123,90 @@ export const PracticeSuite: React.FC<PracticeSuiteProps> = ({
       isCorrect,
       responseTimeMs,
       selectedTechnique: selectedTechnique || question.recommendedTechnique,
+      historical_accuracy: histAcc01,
+      avg_response_time_sec: avgTimeSec,
+      numberOfDigits: question.numberOfDigits,
+      carryCount: question.carryCount,
+      borrowCount: question.borrowCount,
+      operandCount: question.operandCount,
+      label: isCorrect ? 1 : 0,
     });
 
-    // Rule-Based & ML Adaptive Difficulty Check
-    const newAcc = ((totalCorrect + (isCorrect ? 1 : 0)) / (totalAttempts + 1)) * 100;
-    const avgTime = updatedTimes.reduce((a, b) => a + b, 0) / updatedTimes.length;
+    // Auto-train model after every 20 recorded attempts
+    trackAttemptAndTrainIfNeeded();
 
-    const nextDiff = calculateNextDifficulty({
+    // 1. Compute rule-based recommendation
+    const ruleNext = calculateNextDifficulty({
       operation,
-      recentAccuracy: newAcc,
-      avgResponseTimeMs: avgTime,
-      totalAttempts: totalAttempts + 1,
+      recentAccuracy: newAccPercent,
+      avgResponseTimeMs: avgTimeMs,
+      totalAttempts: updatedTotalAttempts,
       currentDifficulty: difficulty,
     });
 
-    if (nextDiff !== difficulty) {
-      setAdaptiveNote(
-        nextDiff > difficulty
-          ? `Difficulty increased to ${nextDiff} · High Accuracy Streak`
-          : `Difficulty adjusted to ${nextDiff} · Refocusing Foundations`
-      );
-    }
-
-    // Run ML learner success prediction in background
-    predictUserSuccess({
-      historical_accuracy: newAcc,
-      avg_response_time_sec: avgTime / 1000,
+    // 2. Fetch ML success prediction (normalized 0-1 historical accuracy, 1500ms timeout fallback)
+    const ml = await predictUserSuccess({
+      historical_accuracy: histAcc01,
+      avg_response_time_sec: avgTimeSec,
       number_of_digits: question.numberOfDigits,
       carry_count: question.carryCount,
       borrow_count: question.borrowCount,
       operand_count: question.operandCount,
     });
 
-    setDifficulty(nextDiff);
+    setLastPredictedSuccess(ml.p_correct);
+
+    // 3. Combined Rules + ML Adaptive Logic:
+    // - Rule UP + ML not DECREASE -> go UP (agree = "rules + ML", otherwise "rules")
+    // - Rule DOWN + ML not INCREASE -> go DOWN (agree = "rules + ML", otherwise "rules")
+    // - Rule STAY + ML INCREASE + >= 5 attempts at this level -> go UP one level ("ML")
+    // - Rule STAY + ML DECREASE + >= 5 attempts at this level -> go DOWN one level ("ML")
+    // - Otherwise keep current difficulty
+    const currentRank = DIFFICULTY_RANKS.indexOf(difficulty);
+    const ruleRank = DIFFICULTY_RANKS.indexOf(ruleNext);
+    const ruleDirection = ruleRank > currentRank ? 'UP' : ruleRank < currentRank ? 'DOWN' : 'STAY';
+    const attemptsThisDiff = attemptsAtCurrentDifficulty + 1;
+
+    let finalRank = currentRank;
+    let decisionSource: 'rules' | 'ML' | 'rules + ML' | null = null;
+
+    if (ruleDirection === 'UP' && ml.recommended_challenge_level !== 'DECREASE_DIFFICULTY') {
+      finalRank = Math.min(DIFFICULTY_RANKS.length - 1, currentRank + 1);
+      if (finalRank > currentRank) {
+        decisionSource = ml.recommended_challenge_level === 'INCREASE_DIFFICULTY' ? 'rules + ML' : 'rules';
+      }
+    } else if (ruleDirection === 'DOWN' && ml.recommended_challenge_level !== 'INCREASE_DIFFICULTY') {
+      finalRank = Math.max(0, currentRank - 1);
+      if (finalRank < currentRank) {
+        decisionSource = ml.recommended_challenge_level === 'DECREASE_DIFFICULTY' ? 'rules + ML' : 'rules';
+      }
+    } else if (ruleDirection === 'STAY') {
+      if (ml.recommended_challenge_level === 'INCREASE_DIFFICULTY' && attemptsThisDiff >= 5) {
+        finalRank = Math.min(DIFFICULTY_RANKS.length - 1, currentRank + 1);
+        if (finalRank > currentRank) {
+          decisionSource = 'ML';
+        }
+      } else if (ml.recommended_challenge_level === 'DECREASE_DIFFICULTY' && attemptsThisDiff >= 5) {
+        finalRank = Math.max(0, currentRank - 1);
+        if (finalRank < currentRank) {
+          decisionSource = 'ML';
+        }
+      }
+    }
+
+    const nextDiff = DIFFICULTY_RANKS[finalRank];
+
+    if (nextDiff !== difficulty && decisionSource) {
+      const actionText = finalRank > currentRank ? 'Difficulty increased to' : 'Difficulty adjusted to';
+      const sourceText = decisionSource === 'rules + ML' ? 'rules + ML agree' : decisionSource;
+      setAdaptiveNote(
+        `${actionText} ${nextDiff} · ${sourceText} (p=${ml.p_correct.toFixed(2)})`
+      );
+      setAttemptsAtCurrentDifficulty(0);
+      setDifficulty(nextDiff);
+    } else {
+      setAttemptsAtCurrentDifficulty(attemptsThisDiff);
+    }
   };
 
   const handleNext = () => {
@@ -177,7 +239,10 @@ export const PracticeSuite: React.FC<PracticeSuiteProps> = ({
               <button
                 key={op}
                 type="button"
-                onClick={() => setOperation(op)}
+                onClick={() => {
+                  setOperation(op);
+                  setAttemptsAtCurrentDifficulty(0);
+                }}
                 className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   op === operation
                     ? 'bg-[#173F35] text-[#FFFDF8] font-bold shadow-sm'
@@ -207,7 +272,13 @@ export const PracticeSuite: React.FC<PracticeSuiteProps> = ({
           </strong>
         </div>
 
-        <div className="flex space-x-4">
+        <div className="flex items-center space-x-4">
+          {lastPredictedSuccess !== null && (
+            <span>
+              Predicted success:{' '}
+              <strong className="text-[#173F35]">{Math.round(lastPredictedSuccess * 100)}%</strong>
+            </span>
+          )}
           <span>
             Accuracy: <strong className="text-[#173F35]">{accuracy}%</strong>
           </span>

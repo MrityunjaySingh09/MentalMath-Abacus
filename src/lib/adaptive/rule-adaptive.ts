@@ -8,7 +8,7 @@ export interface UserPerformanceSnapshot {
   currentDifficulty: DifficultyLevel;
 }
 
-const DIFFICULTY_RANKS: DifficultyLevel[] = ['EASY', 'MEDIUM', 'HARD', 'VERY_HARD'];
+export const DIFFICULTY_RANKS: DifficultyLevel[] = ['EASY', 'MEDIUM', 'HARD', 'VERY_HARD'];
 
 export const TARGET_RESPONSE_TIMES_MS: Record<OperationType, Record<DifficultyLevel, number>> = {
   ADDITION: { EASY: 2000, MEDIUM: 3500, HARD: 5000, VERY_HARD: 8000 },
